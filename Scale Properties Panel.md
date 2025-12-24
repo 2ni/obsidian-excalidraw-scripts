@@ -1,5 +1,5 @@
 /*
- * Excalidraw Geometry Pro (v33 - Shift-Snap & Angle Fix)
+ * Excalidraw Geometry Pro (v34 - Draggable Panel)
  *
  * :setf javascript
  * :iunmap <buffer> <Tab>
@@ -20,17 +20,18 @@ let config = {
   scale: saved.scale ?? 100,
   useCenter: saved.useCenter ?? false,
   origins: Array.isArray(saved.origins) ? saved.origins : [{ id: "00", x: 0, y: 0, angle: 0, length: 100, persistent: true, visualIds: [] }],
-  activeOriginId: saved.activeOriginId ?? "00"
+  activeOriginId: saved.activeOriginId ?? "00",
+  panelPos: saved.panelPos ?? { top: "110px", right: "33px" } // Store position
 };
 
-let state = {
-  mode: "idle",
-  editingField: null,
+let state = { 
+  mode: "idle", 
+  editingField: null, 
   originalValue: null,
-  timer: null,
-  snapPoint: null,
+  timer: null, 
+  snapPoint: null, 
   tempStart: null,
-  capturedSelection: []
+  capturedSelection: [] 
 };
 
 // --- Math Helpers ---
@@ -39,13 +40,7 @@ const toDeg = (rad) => rad * 180 / Math.PI;
 const toMm = (px) => px * 25.4 / 96;
 const toPx = (mm) => mm * 96 / 25.4;
 const toMeters = (px) => toMm(px) * config.scale / 1000;
-
-// Fixes the 390° vs 30° issue
-const normalizeDeg = (deg) => {
-  let d = deg % 360;
-  if (d < 0) d += 360;
-  return d;
-};
+const normalizeDeg = (deg) => { let d = deg % 360; if (d < 0) d += 360; return d; };
 
 const getOrigin = () => {
   const o = config.origins.find(o => o.id === config.activeOriginId) || config.origins[0];
@@ -56,21 +51,18 @@ const getOrigin = () => {
 
 const toLocal = (p) => {
   const o = getOrigin();
-  const dx = p.x - o.x;
-  const dy = p.y - o.y;
-  const cos = Math.cos(-o.angle);
-  const sin = Math.sin(-o.angle);
+  const dx = p.x - o.x; const dy = p.y - o.y;
+  const cos = Math.cos(-o.angle); const sin = Math.sin(-o.angle);
   return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
 };
 
 const toGlobal = (p) => {
   const o = getOrigin();
-  const cos = Math.cos(o.angle);
-  const sin = Math.sin(o.angle);
+  const cos = Math.cos(o.angle); const sin = Math.sin(o.angle);
   return { x: (p.x * cos - p.y * sin) + o.x, y: (p.x * sin + p.y * cos) + o.y };
 };
 
-// --- Snapping & Visuals ---
+// --- Snapping & Overlay ---
 const getOverlay = () => {
   let svg = view.contentEl.querySelector("#geo-snap-overlay");
   if (!svg) {
@@ -133,7 +125,7 @@ const getSnapPoint = (pointer) => {
 // --- UI Construction ---
 const panel = document.createElement("div");
 panel.id = panelId;
-panel.style.cssText = `position:absolute; top:110px; right:33px; width:260px; background:var(--background-secondary); border:1px solid var(--divider-color); box-shadow:0 4px 12px rgba(0,0,0,0.15); border-radius:8px; padding:10px; z-index:100; font-size:11px; display:flex; flex-direction:column; gap:6px; max-height: 85vh; overflow-y:auto; font-family: var(--font-ui); color: var(--text-normal);`;
+panel.style.cssText = `position:absolute; top:${config.panelPos.top}; right:${config.panelPos.right}; width:260px; background:var(--background-secondary); border:1px solid var(--divider-color); box-shadow:0 4px 12px rgba(0,0,0,0.15); border-radius:8px; padding:10px; z-index:100; font-size:11px; display:flex; flex-direction:column; gap:6px; max-height: 85vh; overflow-y:auto; font-family: var(--font-ui); color: var(--text-normal);`;
 
 const buildInputRow = (label, id) => `<div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">${label}</span><input type="number" step="any" data-id="${id}" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>`;
 const buildSection = (title) => `<div style="font-weight:600; opacity:0.8; margin-top:4px; border-bottom:1px solid var(--divider-color); padding-bottom:2px;">${title}</div>`;
@@ -152,7 +144,10 @@ const buildInputRow2 = (label1, id1, label2, id2) => `
 panel.innerHTML = `
 <div style="display:flex; justify-content:space-between; align-items:center; font-weight:bold; margin-bottom:4px;">
   <span>📏 Geometry Pro</span>
-  <div id="btn-close" style="cursor:pointer; padding:2px 6px;">✕</div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <div id="btn-drag" style="cursor:grab; padding:2px 4px; font-size: 14px; color: var(--text-muted);">⠿</div>
+    <div id="btn-close" style="cursor:pointer; padding:2px 6px;">✕</div>
+  </div>
 </div>
 ${buildSection("Element (Local)")}
 <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
@@ -187,7 +182,25 @@ ${buildInputRow("Scale 1:", "scale")}
 `;
 view.contentEl.appendChild(panel);
 
-// --- Logic ---
+// --- Draggable Logic ---
+const dragBtn = panel.querySelector("#btn-drag");
+dragBtn.onmousedown = (e) => {
+    e.preventDefault();
+    let startX = e.clientX, startY = e.clientY;
+    document.onmousemove = (e) => {
+        let dx = startX - e.clientX, dy = startY - e.clientY;
+        startX = e.clientX; startY = e.clientY;
+        panel.style.top = (panel.offsetTop - dy) + "px";
+        panel.style.right = (parseInt(getComputedStyle(panel).right) + dx) + "px";
+    };
+    document.onmouseup = () => {
+        document.onmousemove = null; document.onmouseup = null;
+        config.panelPos = { top: panel.style.top, right: panel.style.right };
+        saveSettings(config);
+    };
+};
+
+// --- Rest of logic (from v33) ---
 const updateOriginVisuals = async (o) => {
   if (o.visualIds.length > 0) {
     const sceneEls = view.excalidrawAPI.getSceneElements();
@@ -206,13 +219,13 @@ const updateOriginVisuals = async (o) => {
     ea.addText(pY.x + 5, pY.y + 5, `Y`, { strokeColor: "#00aa00" })
   ];
   ea.addToGroup(vIds);
-  await ea.addElementsToView(false, false, true);
+  await ea.addElementsToView(false, false);
   const sceneEls = view.excalidrawAPI.getSceneElements();
   const createdEls = sceneEls.filter(el => vIds.includes(el.id));
   ea.clear();
   ea.copyViewElementsToEAforEditing(createdEls);
   ea.getElements().forEach(el => el.locked = true);
-  await ea.addElementsToView(false, false, true);
+  await ea.addElementsToView(false, false);
   o.visualIds = vIds;
 };
 
@@ -277,7 +290,6 @@ const updateUI = (force = false) => {
   setV("el_angle", normalizeDeg(toDeg(el.angle - o.angle)));
 };
 
-// --- Origin Creation Logic (2-Step) ---
 const startOriginCreation = () => {
   state.capturedSelection = ea.getViewSelectedElements();
   state.mode = "placing_start"; state.tempStart = null;
@@ -289,11 +301,9 @@ const startOriginCreation = () => {
     let pos = ea.getViewLastPointerPosition(); if (!pos) return;
     state.snapPoint = (e.metaKey || e.ctrlKey) ? getSnapPoint(pos) : null;
     let target = state.snapPoint || pos;
-    // Shift-Snap Logic (15 deg)
     if (e.shiftKey && state.tempStart) {
         const dx = target.x - state.tempStart.x; const dy = target.y - state.tempStart.y;
-        const dist = Math.hypot(dx, dy); const angle = Math.atan2(dy, dx);
-        const snappedAngle = Math.round(toDeg(angle) / 15) * 15;
+        const dist = Math.hypot(dx, dy); const snappedAngle = Math.round(toDeg(Math.atan2(dy, dx)) / 15) * 15;
         target = { x: state.tempStart.x + dist * Math.cos(toRad(snappedAngle)), y: state.tempStart.y + dist * Math.sin(toRad(snappedAngle)) };
     }
     drawOverlay(state.snapPoint, state.tempStart, target);
@@ -306,8 +316,7 @@ const startOriginCreation = () => {
     let target = state.snapPoint || pos;
     if (e.shiftKey && state.tempStart) {
         const dx = target.x - state.tempStart.x; const dy = target.y - state.tempStart.y;
-        const dist = Math.hypot(dx, dy); const angle = Math.atan2(dy, dx);
-        const snappedAngle = Math.round(toDeg(angle) / 15) * 15;
+        const dist = Math.hypot(dx, dy); const snappedAngle = Math.round(toDeg(Math.atan2(dy, dx)) / 15) * 15;
         target = { x: state.tempStart.x + dist * Math.cos(toRad(snappedAngle)), y: state.tempStart.y + dist * Math.sin(toRad(snappedAngle)) };
     }
     if (state.mode === "placing_start") { state.tempStart = target; state.mode = "placing_end"; panel.querySelector("#btn-add").innerText = "Click X End (Shift=15°)"; }
@@ -331,7 +340,6 @@ const startOriginCreation = () => {
   window.addEventListener("mousemove", onMove); window.addEventListener("mousedown", onClick, true); window.addEventListener("keydown", onEsc, true);
 };
 
-// --- General Event Listeners ---
 const refreshDropdown = () => {
   const select = panel.querySelector("#origin-select");
   if (select && Array.isArray(config.origins)) {
