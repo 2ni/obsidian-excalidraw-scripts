@@ -195,7 +195,7 @@ const updateUI = (force = false) => {
   // Origins
   setV("ox_px", o.x); setV("oy_px", o.y);
   setV("ox_mm", toMm(o.x)); setV("oy_mm", toMm(o.y));
-  setV("ox_m", toMeters(o.x), 3); setV("oy_m", toMeters(o.y), 3);
+  setV("ox_m", toMeters(o.x), 2); setV("oy_m", toMeters(o.y), 2);
   setV("scale", config.scale, 0);
 
   // Elements
