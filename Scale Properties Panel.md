@@ -295,13 +295,13 @@ const updateOriginVisuals = async (o) => {
     ea.addText(pY.x + 5, pY.y + 5, `Y`, { strokeColor: "#00aa00" })
   ];
   ea.addToGroup(vIds);
-  await ea.addElementsToView(false, false);
+  await ea.addElementsToView(false, false, true);
   const sceneEls = view.excalidrawAPI.getSceneElements();
   const createdEls = sceneEls.filter(el => vIds.includes(el.id));
   ea.clear();
   ea.copyViewElementsToEAforEditing(createdEls);
   ea.getElements().forEach(el => el.locked = true);
-  await ea.addElementsToView(false, false);
+  await ea.addElementsToView(false, false, true);
   o.visualIds = vIds;
 };
 
