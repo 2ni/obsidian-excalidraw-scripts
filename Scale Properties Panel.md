@@ -123,25 +123,77 @@ const getSnapPoint = (pointer) => {
   const zoom = appState.zoom.value;
   const threshold = 20 / zoom;
   const sceneEls = api.getSceneElements();
-  const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
   let best = null, minD = threshold;
+
+  const rotatePoint = (px, py, cx, cy, angle) => {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const dx = px - cx;
+    const dy = py - cy;
+    return {
+      x: cx + (dx * cos - dy * sin),
+      y: cy + (dx * sin + dy * cos)
+    };
+  };
+
   for (const el of sceneEls) {
     if (el.isDeleted || el.type === "selection" || (getOrigin().visualIds || []).includes(el.id)) continue;
+
     const points = [];
-    if (Array.isArray(el.points)) {
-      const segments = el.points.map(([px, py]) => ({ x: el.x + px, y: el.y + py }));
-      points.push(...segments);
-      for (let i = 0; i < segments.length - 1; i++) points.push(midpoint(segments[i], segments[i + 1]));
+    const cx = el.x + el.width / 2;
+    const cy = el.y + el.height / 2;
+
+    if (el.type === "line" || el.type === "arrow" || el.type === "freedraw") {
+      // For multi-point elements
+      const globalPoints = el.points.map(([px, py]) => {
+        // Points are relative to el.x, el.y but rotation is around cx, cy
+        return rotatePoint(el.x + px, el.y + py, cx, cy, el.angle);
+      });
+
+      points.push(...globalPoints);
+
+      // Calculate midpoints of segments
+      for (let i = 0; i < globalPoints.length - 1; i++) {
+        points.push({
+          x: (globalPoints[i].x + globalPoints[i + 1].x) / 2,
+          y: (globalPoints[i].y + globalPoints[i + 1].y) / 2
+        });
+      }
     } else {
-      points.push(...[{ x: el.x, y: el.y }, { x: el.x + el.width, y: el.y }, { x: el.x, y: el.y + el.height }, { x: el.x + el.width, y: el.y + el.height }, { x: el.x + el.width / 2, y: el.y + el.height / 2 }]);
+      // For rectangular elements (Rectangle, Diamond, Ellipse, Image, Text)
+      const corners = [
+        { x: el.x, y: el.y }, // Top-Left
+        { x: el.x + el.width, y: el.y }, // Top-Right
+        { x: el.x, y: el.y + el.height }, // Bottom-Left
+        { x: el.x + el.width, y: el.y + el.height }, // Bottom-Right
+        { x: cx, y: cy } // Center
+      ];
+
+      // Add mid-edges
+      corners.push({ x: cx, y: el.y }); // Top-Mid
+      corners.push({ x: cx, y: el.y + el.height }); // Bottom-Mid
+      corners.push({ x: el.x, y: cy }); // Left-Mid
+      corners.push({ x: el.x + el.width, y: cy }); // Right-Mid
+
+      points.push(...corners.map(p => rotatePoint(p.x, p.y, cx, cy, el.angle)));
     }
+
     for (const p of points) {
       const d = Math.hypot(pointer.x - p.x, pointer.y - p.y);
-      if (d < minD) { minD = d; best = p; }
+      if (d < minD) {
+        minD = d;
+        best = p;
+      }
     }
   }
-  if (best) return { x: best.x, y: best.y, vpX: (best.x + appState.scrollX) * zoom, vpY: (best.y + appState.scrollY) * zoom };
+
+  if (best) return {
+    x: best.x,
+    y: best.y,
+    vpX: (best.x + appState.scrollX) * zoom,
+    vpY: (best.y + appState.scrollY) * zoom
+  };
   return null;
 };
 
