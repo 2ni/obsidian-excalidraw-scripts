@@ -24,14 +24,14 @@ let config = {
   panelPos: saved.panelPos ?? { top: "110px", right: "33px" } // Store position
 };
 
-let state = { 
-  mode: "idle", 
-  editingField: null, 
+let state = {
+  mode: "idle",
+  editingField: null,
   originalValue: null,
-  timer: null, 
-  snapPoint: null, 
+  timer: null,
+  snapPoint: null,
   tempStart: null,
-  capturedSelection: [] 
+  capturedSelection: []
 };
 
 // --- Math Helpers ---
@@ -40,7 +40,26 @@ const toDeg = (rad) => rad * 180 / Math.PI;
 const toMm = (px) => px * 25.4 / 96;
 const toPx = (mm) => mm * 96 / 25.4;
 const toMeters = (px) => toMm(px) * config.scale / 1000;
-const normalizeDeg = (deg) => { let d = deg % 360; if (d < 0) d += 360; return d; };
+/**
+ * Normalizes angle to (-180, 180] range
+ * and prevents the -0.00 display artifact
+ */
+const formatAngle = (rad) => {
+  let deg = toDeg(rad) % 360;
+  if (deg > 180) deg -= 360;
+  if (deg <= -180) deg += 360;
+  return deg;
+};
+
+/**
+ * Ensures value doesn't show -0.00 in UI
+ */
+const cleanValue = (val, precision) => {
+  const fixed = val.toFixed(precision);
+  // If rounded value is 0 (e.g. "0.00" or "-0.00"), force positive "0.00"
+  if (parseFloat(fixed) === 0) return (0).toFixed(precision);
+  return fixed;
+};
 
 const getOrigin = () => {
   const o = config.origins.find(o => o.id === config.activeOriginId) || config.origins[0];
@@ -94,6 +113,10 @@ const drawOverlay = (snapP, startP, currP) => {
   svg.innerHTML = html;
 };
 
+/*
+ * TODO: do not calculate the points everytime the mouse moves
+ *       but instead when the zoom or screen moves
+ */
 const getSnapPoint = (pointer) => {
   const api = view.excalidrawAPI;
   const appState = api.getAppState();
@@ -149,7 +172,7 @@ panel.innerHTML = `
     <div id="btn-close" style="cursor:pointer; padding:2px 6px;">✕</div>
   </div>
 </div>
-${buildSection("Element (Local)")}
+${buildSection("Element (px)")}
 <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
   <input type="checkbox" id="chk-center" ${config.useCenter ? "checked" : ""}>
   <label for="chk-center" style="opacity:0.9; cursor:pointer;">Use Center</label>
@@ -163,7 +186,8 @@ ${buildInputRow2("W mm", "w_mm", "H mm", "h_mm")}
 ${buildSection("Element (m)")}
 ${buildInputRow2("X m", "x_m", "Y m", "y_m")}
 ${buildInputRow2("W m", "w_m", "H m", "h_m")}
-${buildSection("Coordinate System (Global)")}
+${buildSection("Coordinate System")}
+${buildInputRow("Scale 1:", "scale")}
 ${buildInputRow2("X0 px", "ox0_px", "Y0 px", "oy0_px")}
 ${buildInputRow2("X1 px", "ox1_px", "Y1 px", "oy1_px")}
 ${buildInputRow2("X0 mm", "ox0_mm", "Y0 mm", "oy0_mm")}
@@ -171,14 +195,14 @@ ${buildInputRow2("X1 mm", "ox1_mm", "Y1 mm", "oy1_mm")}
 ${buildInputRow2("X0 m", "ox0_m", "Y0 m", "oy0_m")}
 ${buildInputRow2("X1 m", "ox1_m", "Y1 m", "oy1_m")}
 ${buildInputRow("Angle °", "o_angle")}
-${buildSection("Configuration")}
-${buildInputRow("Scale 1:", "scale")}
-<div style="display:flex; gap:5px; margin-top:8px;">
-  <button id="btn-add" style="flex:1;">Define Origin (Line)</button>
-  <button id="btn-del" style="flex:1;">Delete</button>
+<div style="display:flex; gap:5px; margin-top:8px; width:100%;">
+  <button id="btn-add" style="flex:1 1 0; width:0; min-width:0; height:24px; padding:0; display:flex; align-items:center; justify-content:center; box-sizing:border-box;">New</button>
+  <button id="btn-del" style="flex:1 1 0; width:0; min-width:0; height:24px; padding:0; display:flex; align-items:center; justify-content:center; box-sizing:border-box;">Delete</button>
 </div>
-<button id="btn-front" style="width:100%; margin-top:2px;">Markers to front</button>
-<select id="origin-select" style="width:100%; margin-top:5px; background:var(--background-primary); border:1px solid var(--divider-color); color: var(--text-normal);"></select>
+<div style="display:flex; gap:5px; margin-top:4px; width:100%;">
+  <button id="btn-front" style="flex:1 1 0; width:0; min-width:0; height:24px; padding:0; display:flex; align-items:center; justify-content:center; box-sizing:border-box;">To front</button>
+  <select id="origin-select" style="flex:1 1 0; width:0; min-width:0; height:24px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px; box-sizing:border-box; cursor:pointer; padding:0 2px; font-size:13px; text-align: center;"></select>
+</div>
 `;
 view.contentEl.appendChild(panel);
 
@@ -275,19 +299,46 @@ const applyInputToScene = async (id, val) => {
 const updateUI = (force = false) => {
   if (state.mode !== "idle" && !force) return;
   const o = getOrigin();
-  const setV = (id, v, p=2) => { if (state.editingField === id && !force) return; const i = panel.querySelector(`[data-id="${id}"]`); if (i) i.value = v.toFixed(p); };
-  setV("ox0_px", o.x); setV("oy0_px", o.y); setV("ox0_mm", toMm(o.x)); setV("oy0_mm", toMm(o.y)); setV("ox0_m", toMeters(o.x), 3); setV("oy0_m", toMeters(o.y), 3);
+  const setV = (id, v, p=2) => {
+    if (state.editingField === id && !force) return;
+    const i = panel.querySelector(`[data-id="${id}"]`);
+    if (i) i.value = cleanValue(v, p);
+  };
+
+  // Origin Section
+  setV("ox0_px", o.x); setV("oy0_px", o.y);
+  setV("ox0_mm", toMm(o.x)); setV("oy0_mm", toMm(o.y));
+  setV("ox0_m", toMeters(o.x), 3); setV("oy0_m", toMeters(o.y), 3);
+
   const p1 = { x: o.x + o.length * Math.cos(o.angle), y: o.y + o.length * Math.sin(o.angle) };
-  setV("ox1_px", p1.x); setV("oy1_px", p1.y); setV("ox1_mm", toMm(p1.x)); setV("oy1_mm", toMm(p1.y)); setV("ox1_m", toMeters(p1.x), 3); setV("oy1_m", toMeters(p1.y), 3);
-  setV("o_angle", normalizeDeg(toDeg(o.angle))); setV("scale", config.scale, 0);
+  setV("ox1_px", p1.x); setV("oy1_px", p1.y);
+  setV("ox1_mm", toMm(p1.x)); setV("oy1_mm", toMm(p1.y));
+  setV("ox1_m", toMeters(p1.x), 3); setV("oy1_m", toMeters(p1.y), 3);
+
+  // Apply normalized angle display
+  setV("o_angle", formatAngle(o.angle));
+  setV("scale", config.scale, 0);
+
   const el = ea.getViewSelectedElement();
-  if (!el) { panel.querySelectorAll('input:not([data-id^="o"]):not([data-id="scale"])').forEach(i => { if (state.editingField !== i.dataset.id) i.value = ""; }); return; }
+  if (!el) {
+    panel.querySelectorAll('input:not([data-id^="o"]):not([data-id="scale"])').forEach(i => {
+      if (state.editingField !== i.dataset.id) i.value = "";
+    });
+    return;
+  }
+
   let targetP = config.useCenter ? { x: el.x + el.width / 2, y: el.y + el.height / 2 } : { x: el.x, y: el.y };
   const localP = toLocal(targetP);
-  setV("x_px", localP.x); setV("y_px", localP.y); setV("w_px", el.width); setV("h_px", el.height);
-  setV("x_mm", toMm(localP.x)); setV("y_mm", toMm(localP.y)); setV("w_mm", toMm(el.width)); setV("h_mm", toMm(el.height));
-  setV("x_m", toMeters(localP.x), 3); setV("y_m", toMeters(localP.y), 3); setV("w_m", toMeters(el.width), 3); setV("h_m", toMeters(el.height), 3);
-  setV("el_angle", normalizeDeg(toDeg(el.angle - o.angle)));
+
+  setV("x_px", localP.x); setV("y_px", localP.y);
+  setV("w_px", el.width); setV("h_px", el.height);
+  setV("x_mm", toMm(localP.x)); setV("y_mm", toMm(localP.y));
+  setV("w_mm", toMm(el.width)); setV("h_mm", toMm(el.height));
+  setV("x_m", toMeters(localP.x), 3); setV("y_m", toMeters(localP.y), 3);
+  setV("w_m", toMeters(el.width), 3); setV("h_m", toMeters(el.height), 3);
+
+  // Element Angle relative to LCS (Local Coordinate System)
+  setV("el_angle", formatAngle(el.angle - o.angle));
 };
 
 const startOriginCreation = () => {
@@ -332,7 +383,7 @@ const startOriginCreation = () => {
   };
   const stop = () => {
     state.mode = "idle"; state.tempStart = null; drawOverlay(null, null, null);
-    panel.querySelector("#btn-add").innerText = "Define Origin (Line)";
+    panel.querySelector("#btn-add").innerText = "New";
     if(excalContainer) excalContainer.style.cursor = "";
     window.removeEventListener("mousemove", onMove); window.removeEventListener("mousedown", onClick, true); window.removeEventListener("keydown", onEsc, true);
   };
@@ -343,7 +394,7 @@ const startOriginCreation = () => {
 const refreshDropdown = () => {
   const select = panel.querySelector("#origin-select");
   if (select && Array.isArray(config.origins)) {
-    select.innerHTML = config.origins.map(o => `<option value="${o.id}" ${o.id === config.activeOriginId ? "selected" : ""}>LCS: ${o.id.toUpperCase()}</option>`).join("");
+    select.innerHTML = config.origins.map(o => `<option value="${o.id}" ${o.id === config.activeOriginId ? "selected" : ""}>${o.id.toUpperCase()}</option>`).join("");
   }
 };
 panel.addEventListener("change", (e) => {
