@@ -1,5 +1,5 @@
 /*
- * Excalidraw Geometry Pro (v30 - Unified Logic)
+ * Excalidraw Geometry Pro (v31 - Center Logic Added)
  * * :setf javascript
  * :iunmap <buffer> <Tab>
  */
@@ -17,17 +17,18 @@ const saveSettings = (s) => ea.setScriptSettings({ ...getSettings(), [view.file.
 let saved = getSettings()[view.file.path] || {};
 let config = {
   scale: saved.scale ?? 100,
+  useCenter: saved.useCenter ?? false, // New Config Option
   origins: Array.isArray(saved.origins) ? saved.origins : [{ id: "00", x: 0, y: 0, persistent: true, visualIds: [] }],
   activeOriginId: saved.activeOriginId ?? "00"
 };
 
-let state = {
-  isAdding: false,
-  editingField: null,
-  originalValue: null, // Stores value on focus for Escape
-  timer: null,
-  snapPoint: null,
-  capturedSelection: []
+let state = { 
+  isAdding: false, 
+  editingField: null, 
+  originalValue: null,
+  timer: null, 
+  snapPoint: null, 
+  capturedSelection: [] 
 };
 
 // --- Helpers ---
@@ -73,7 +74,7 @@ const getSnapPoint = (pointer) => {
       for (let i = 0; i < segments.length - 1; i++) points.push(midpoint(segments[i], segments[i + 1]));
     } else {
       points.push(...[
-        { x: el.x, y: el.y }, { x: el.x + el.width, y: el.y },
+        { x: el.x, y: el.y }, { x: el.x + el.width, y: el.y }, 
         { x: el.x, y: el.y + el.height }, { x: el.x + el.width, y: el.y + el.height },
         { x: el.x + el.width / 2, y: el.y + el.height / 2 }
       ]);
@@ -111,21 +112,31 @@ panel.innerHTML = `
   <span>📏 Geometry Pro</span>
   <div id="btn-close" style="cursor:pointer; padding:2px 6px;">✕</div>
 </div>
+
 ${buildSection("Element (px)")}
+<div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+  <input type="checkbox" id="chk-center" ${config.useCenter ? "checked" : ""}>
+  <label for="chk-center" style="opacity:0.9; cursor:pointer;">Use Center</label>
+</div>
 ${buildInputRow2("X px", "x_px", "Y px", "y_px")}
 ${buildInputRow2("W px", "w_px", "H px", "h_px")}
+
 ${buildSection("Element (mm)")}
 ${buildInputRow2("X mm", "x_mm", "Y mm", "y_mm")}
 ${buildInputRow2("W mm", "w_mm", "H mm", "h_mm")}
+
 ${buildSection("Element (scaled)")}
 ${buildInputRow2("X m", "x_m", "Y m", "y_m")}
 ${buildInputRow2("W m", "w_m", "H m", "h_m")}
+
 ${buildSection("Origins")}
 ${buildInputRow2("X px", "ox_px", "Y px", "oy_px")}
 ${buildInputRow2("X mm", "ox_mm", "Y mm", "oy_mm")}
 ${buildInputRow2("X m", "ox_m", "Y m", "oy_m")}
+
 ${buildSection("Configuration")}
 ${buildInputRow("Scale 1:", "scale")}
+
 <div style="display:flex; gap:5px; margin-top:8px;">
   <button id="btn-add" style="flex:1;">Add Origin</button>
   <button id="btn-del" style="flex:1;">Delete Origin</button>
@@ -137,77 +148,97 @@ view.contentEl.appendChild(panel);
 
 // --- Logic: Read & Write ---
 
-// 1. Unified function to apply input changes to the scene
 const applyInputToScene = async (id, val) => {
   if (isNaN(val)) return;
 
-  // Handle Config
   if (id === "scale") {
     config.scale = val;
     saveSettings(config);
     return;
   }
 
-  // Handle Element properties
   const el = ea.getViewSelectedElement();
   const origin = getOrigin();
+  const uc = config.useCenter;
 
   if (el && !id.startsWith("o")) {
     ea.clear();
     await ea.copyViewElementsToEAforEditing([el]);
     const activeEl = ea.getElements()[0];
 
-    // Pixel updates
-    if (id === "x_px") activeEl.x = val + origin.x;
-    if (id === "y_px") activeEl.y = val + origin.y;
-    if (id === "w_px") activeEl.width = val;
-    if (id === "h_px") activeEl.height = val;
+    // Helper: Apply Size with Center anchoring if enabled
+    const setWidth = (newW) => {
+      const oldCx = activeEl.x + activeEl.width / 2;
+      activeEl.width = newW;
+      if (uc) activeEl.x = oldCx - newW / 2;
+    };
+    const setHeight = (newH) => {
+      const oldCy = activeEl.y + activeEl.height / 2;
+      activeEl.height = newH;
+      if (uc) activeEl.y = oldCy - newH / 2;
+    };
 
-    // Metric updates (convert to Px first)
-    if (id === "x_mm") activeEl.x = toPx(val) + origin.x;
-    if (id === "y_mm") activeEl.y = toPx(val) + origin.y;
-    if (id === "w_mm") activeEl.width = toPx(val);
-    if (id === "h_mm") activeEl.height = toPx(val);
+    // Helper: Apply Pos accounting for Center offset
+    const setX = (newGlobalX) => { activeEl.x = uc ? newGlobalX - activeEl.width / 2 : newGlobalX; };
+    const setY = (newGlobalY) => { activeEl.y = uc ? newGlobalY - activeEl.height / 2 : newGlobalY; };
 
-    // Scaled M updates
-    if (id === "x_m") activeEl.x = toPx((val * 1000) / (config.scale / 100)) + origin.x;
-    if (id === "y_m") activeEl.y = toPx((val * 1000) / (config.scale / 100)) + origin.y;
-    if (id === "w_m") activeEl.width = toPx((val * 1000) / (config.scale / 100));
-    if (id === "h_m") activeEl.height = toPx((val * 1000) / (config.scale / 100));
+    // --- PX Inputs ---
+    if (id === "x_px") setX(val + origin.x);
+    if (id === "y_px") setY(val + origin.y);
+    if (id === "w_px") setWidth(val);
+    if (id === "h_px") setHeight(val);
+
+    // --- MM Inputs ---
+    if (id === "x_mm") setX(toPx(val) + origin.x);
+    if (id === "y_mm") setY(toPx(val) + origin.y);
+    if (id === "w_mm") setWidth(toPx(val));
+    if (id === "h_mm") setHeight(toPx(val));
+
+    // --- M Inputs ---
+    const toPxS = (m) => toPx((m * 1000) / (config.scale / 100));
+    if (id === "x_m") setX(toPxS(val) + origin.x);
+    if (id === "y_m") setY(toPxS(val) + origin.y);
+    if (id === "w_m") setWidth(toPxS(val));
+    if (id === "h_m") setHeight(toPxS(val));
 
     await ea.addElementsToView(false, false);
   }
 };
 
-// 2. Unified function to Update UI from Scene
 const updateUI = (force = false) => {
-  // If we are actively placing a new origin, do not refresh UI (onMove handles it)
   if (state.isAdding && !force) return;
 
   const o = getOrigin();
-  const setV = (id, v, p=2) => {
-    // If this field is being edited by the user, SKIP updating it unless forced
+  const setV = (id, v, p=2) => { 
     if (state.editingField === id && !force) return;
-    const i = panel.querySelector(`[data-id="${id}"]`);
-    if (i) i.value = v.toFixed(p);
+    const i = panel.querySelector(`[data-id="${id}"]`); 
+    if (i) i.value = v.toFixed(p); 
   };
 
   // Origins
-  setV("ox_px", o.x); setV("oy_px", o.y);
+  setV("ox_px", o.x); setV("oy_px", o.y); 
   setV("ox_mm", toMm(o.x)); setV("oy_mm", toMm(o.y));
-  setV("ox_m", toMeters(o.x), 2); setV("oy_m", toMeters(o.y), 2);
+  setV("ox_m", toMeters(o.x), 3); setV("oy_m", toMeters(o.y), 3);
   setV("scale", config.scale, 0);
 
   // Elements
   const el = ea.getViewSelectedElement();
-  if (!el) {
+  if (!el) { 
     panel.querySelectorAll('input:not([data-id^="o"]):not([data-id="scale"])').forEach(i => {
-       if (state.editingField !== i.dataset.id) i.value = "";
+       if (state.editingField !== i.dataset.id) i.value = ""; 
     });
-    return;
+    return; 
   }
 
-  const lx = toLocal(el.x, 'x'), ly = toLocal(el.y, 'y');
+  // Calculate Display Values based on "Use Center"
+  let dx = el.x, dy = el.y;
+  if (config.useCenter) {
+    dx += el.width / 2;
+    dy += el.height / 2;
+  }
+
+  const lx = toLocal(dx, 'x'), ly = toLocal(dy, 'y');
+  
   setV("x_px", lx); setV("y_px", ly); setV("w_px", el.width); setV("h_px", el.height);
   setV("x_mm", toMm(lx)); setV("y_mm", toMm(ly)); setV("w_mm", toMm(el.width)); setV("h_mm", toMm(el.height));
   setV("x_m", toMeters(lx), 3); setV("y_m", toMeters(ly), 3); setV("w_m", toMeters(el.width), 3); setV("h_m", toMeters(el.height), 3);
@@ -215,41 +246,44 @@ const updateUI = (force = false) => {
 
 // --- Interaction Handlers ---
 
-// Focus Management
+panel.addEventListener("change", (e) => {
+  if (e.target.id === "chk-center") {
+    config.useCenter = e.target.checked;
+    saveSettings(config);
+    updateUI(true); // Force update to switch values immediately
+  }
+  if (e.target.id === "origin-select") { 
+    config.activeOriginId = e.target.value; 
+    saveSettings(config); 
+    updateUI(true); 
+  } 
+});
+
 panel.addEventListener("focusin", (e) => {
   if (e.target.classList.contains("geo-input")) {
     state.editingField = e.target.dataset.id;
-    state.originalValue = e.target.value; // Snapshot for Escape
+    state.originalValue = e.target.value;
   }
 });
 panel.addEventListener("focusout", () => { state.editingField = null; });
 
-// Keyboard Management (The Core Fix)
 panel.addEventListener("keydown", async (e) => {
   if (!e.target.classList.contains("geo-input")) return;
 
-  // ESC: Revert
   if (e.key === "Escape") {
     e.target.value = state.originalValue;
+    e.target.blur();
     return;
   }
 
-  // ENTER or TAB: Apply
   if (e.key === "Enter" || e.key === "Tab") {
     const val = parseFloat(e.target.value);
-
-    // 1. Write to Scene
     await applyInputToScene(e.target.dataset.id, val);
-
-    // 2. Force Read from Scene (This applies formatting instantly)
     updateUI(true);
-
-    // 3. Handle selection/focus behavior
     if (e.key === "Enter") {
-      e.preventDefault(); // Stop default form submit
-      e.target.select();  // Keep focus and select all
+      e.preventDefault();
+      e.target.select();
     }
-    // Tab will naturally move focus, triggering focusout, which is fine
   }
 });
 
@@ -268,8 +302,6 @@ const startOriginCreation = () => {
     const target = state.snapPoint || pos;
     drawSnapIndicator(state.snapPoint);
 
-    // Only update ORIGIN fields manually here for responsiveness
-    // We do NOT update Element fields here to avoid flickering/logic conflict
     const setV = (id, v, p=2) => { const i = panel.querySelector(`[data-id="${id}"]`); if(i) i.value = v.toFixed(p); };
     setV("ox_px", target.x); setV("oy_px", target.y);
     setV("ox_mm", toMm(target.x)); setV("oy_mm", toMm(target.y));
@@ -283,8 +315,6 @@ const startOriginCreation = () => {
     const target = state.snapPoint || pos;
     if(target) {
       const id = Math.random().toString(36).substring(2, 4);
-
-      // Create Visuals
       ea.clear();
       ea.style.strokeColor = "#e03131"; ea.style.backgroundColor = "#ffc9c9"; ea.style.fillStyle = "solid";
       ea.style.strokeWidth = 1; ea.style.roughness = 0; ea.style.fontSize = 16;
@@ -295,8 +325,7 @@ const startOriginCreation = () => {
       ];
       ea.addToGroup(visualIds);
       await ea.addElementsToView(false, false);
-
-      // Lock Visuals
+      
       const sceneEls = view.excalidrawAPI.getSceneElements();
       const createdEls = sceneEls.filter(el => visualIds.includes(el.id));
       ea.clear();
@@ -305,7 +334,6 @@ const startOriginCreation = () => {
       await ea.addElementsToView(false, false);
 
       if (state.capturedSelection?.length > 0) ea.selectElementsInView(state.capturedSelection);
-
       config.origins.push({ id, x: target.x, y: target.y, visualIds });
       config.activeOriginId = id;
       saveSettings(config); refreshDropdown(); updateUI(true);
@@ -335,7 +363,6 @@ panel.addEventListener("click", async (e) => {
   if (e.target.id === "btn-close") { clearInterval(state.timer); panel.remove(); document.querySelector("#geo-snap-overlay")?.remove(); }
   if (e.target.id === "btn-add") startOriginCreation();
   if (e.target.id === "btn-front") {
-    // Origins to Front Logic
     const allOriginIds = config.origins.flatMap(o => o.visualIds);
     const sceneEls = view.excalidrawAPI.getSceneElements();
     const toFront = sceneEls.filter(el => allOriginIds.includes(el.id));
@@ -358,8 +385,6 @@ panel.addEventListener("click", async (e) => {
     saveSettings(config); refreshDropdown(); updateUI(true);
   }
 });
-
-panel.addEventListener("change", (e) => { if (e.target.id === "origin-select") { config.activeOriginId = e.target.value; saveSettings(config); updateUI(true); } });
 
 refreshDropdown();
 state.timer = setInterval(updateUI, 200);
