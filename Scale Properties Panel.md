@@ -3,28 +3,6 @@
  * TODO use excalidrawCanvasChangeActive to handle which snapping points to use. When canvas is moved or zoomed -> calculate new points
  * TODO use onblur to update values, so values can be set on ipad
  */
-/*
-const api = ea.getExcalidrawAPI();
-window.lastX = window.lastX ?? -999999;
-window.lastY = window.lastY ?? -999999;
-window.lastZ = window.lastZ ?? -1;
-
-if (!window.excalidrawCanvasChangeActive) {
-  api.onChange((elements, appState) => {
-    const { scrollX, scrollY, zoom } = appState;
-
-    if (window.lastX !== scrollX || window.lastY !== scrollY || window.lastZ !== zoom.value) {
-      console.log("canvas changed");
-      window.lastX = scrollX;
-      window.lastY = scrollY;
-      window.lastZ = zoom.value;
-    }
-  });
-  window.excalidrawCanvasChangeActive = true;
-  console.log("Canvas change listener subscribed.");
-}
-*/
-
 
 const panelId = "geometry-pro-panel";
 const view = app.workspace.getActiveViewOfType(customElements.get("excalidraw-view")?.constructor || Object);
@@ -58,7 +36,7 @@ let config = {
   panelPos: saved.panelPos ?? { top: "110px", right: "33px" }
 };
 
-let state = { mode: "idle", editingField: null, originalValue: null, timer: null, snapPoint: null, tempStart: null, capturedSelection: [] };
+let state = { mode: "idle", editingField: null, originalValue: null, snapPoint: null, tempStart: null, capturedSelection: [] };
 
 // --- Transformation Math Helpers ---
 const toRad = (deg) => deg * Math.PI / 180;
@@ -133,27 +111,70 @@ const getOverlay = () => {
   return svg;
 };
 
+// A simple throttle flag
+let updateRequested = false;
+
 const drawOverlay = (snapP, startP, currP) => {
   const svg = getOverlay();
+
+  // Ensure the arrowhead definition exists once and persists
+  if (!svg.querySelector("#geo-defs")) {
+    svg.innerHTML = `
+      <defs id="geo-defs">
+        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="context-stroke" />
+        </marker>
+      </defs>
+      <g id="geo-content"></g>`;
+  }
+
+  const contentGroup = svg.querySelector("#geo-content");
+  const api = view.excalidrawAPI;
+  const appState = api.getAppState();
+  const { scrollX, scrollY, zoom } = appState;
+
+  const toVp = (x, y) => ({
+    x: (x + scrollX) * zoom.value,
+    y: (y + scrollY) * zoom.value
+  });
+
   let html = "";
+
+  // 1. Draw Origins
+  config.origins.forEach(o => {
+    const p0 = toVp(o.x, o.y);
+    const cos = Math.cos(o.angle), sin = Math.sin(o.angle);
+    const pX = toVp(o.x + o.length * cos, o.y + o.length * sin);
+    const pY = toVp(o.x - o.length * sin, o.y + o.length * cos);
+
+    const isActive = o.id === config.activeOriginId;
+    const color = isActive ? "#e03131" : "#999999";
+    const opacity = isActive ? "1.0" : "0.2";
+
+    html += `
+      <g opacity="${opacity}" stroke="${color}" stroke-width="2">
+        <line x1="${p0.x}" y1="${p0.y}" x2="${pX.x}" y2="${pX.y}" marker-end="url(#arrowhead)" />
+        <line x1="${p0.x}" y1="${p0.y}" x2="${pY.x}" y2="${pY.y}" marker-end="url(#arrowhead)" />
+        <text x="${pX.x + 5}" y="${pX.y + 5}" fill="${color}" stroke="none" style="font: bold 12px sans-serif">X (${o.id.toUpperCase()})</text>
+        <text x="${pY.x + 5}" y="${pY.y + 5}" fill="${color}" stroke="none" style="font: bold 12px sans-serif">Y</text>
+      </g>`;
+  });
+
+  // 2. Snap Points & Construction Lines
   if (snapP) {
-    html += `<circle cx="${snapP.vpX}" cy="${snapP.vpY}" r="6" fill="none" stroke="#e03131" stroke-width="2" />
-             <circle cx="${snapP.vpX}" cy="${snapP.vpY}" r="1.5" fill="#e03131" />`;
+    html += `<circle cx="${snapP.vpX}" cy="${snapP.vpY}" r="6" fill="none" stroke="#e03131" stroke-width="2" />`;
   }
   if (startP && currP) {
-    const api = view.excalidrawAPI;
-    const appState = api.getAppState();
-    const zoom = appState.zoom.value;
-    const x1 = (startP.x + appState.scrollX) * zoom;
-    const y1 = (startP.y + appState.scrollY) * zoom;
-    const x2 = (currP.x + appState.scrollX) * zoom;
-    const y2 = (currP.y + appState.scrollY) * zoom;
-    html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#e03131" stroke-width="1" stroke-dasharray="4" />`;
+    const v1 = toVp(startP.x, startP.y);
+    const v2 = toVp(currP.x, currP.y);
+    html += `<line x1="${v1.x}" y1="${v1.y}" x2="${v2.x}" y2="${v2.y}" stroke="#e03131" stroke-width="1" stroke-dasharray="4" />`;
   }
-  svg.innerHTML = html;
+
+  contentGroup.innerHTML = html;
 };
 
 const getSnapPoint = (pointer) => {
+  console.log("getSnapPoint");
   const api = view.excalidrawAPI;
   const appState = api.getAppState();
   const zoom = appState.zoom.value;
@@ -163,26 +184,60 @@ const getSnapPoint = (pointer) => {
 
   for (const el of sceneEls) {
     if (el.isDeleted || el.type === "selection" || (getOrigin().visualIds || []).includes(el.id)) continue;
+
     const points = [];
-    const cx = el.x + el.width / 2, cy = el.y + el.height / 2;
-    const rot = (px, py) => {
-      const c = Math.cos(el.angle), s = Math.sin(el.angle);
+    const cx = el.x + el.width / 2;
+    const cy = el.y + el.height / 2;
+
+    const rotatePoint = (px, py) => {
+      if (el.angle === 0) return { x: px, y: py };
+      const cos = Math.cos(el.angle), sin = Math.sin(el.angle);
       const dx = px - cx, dy = py - cy;
-      return { x: cx + (dx * c - dy * s), y: cy + (dx * s + dy * c) };
+      return {
+        x: cx + (dx * cos - dy * sin),
+        y: cy + (dx * sin + dy * cos)
+      };
     };
 
-    if (["line", "arrow", "freedraw"].includes(el.type)) {
-      el.points.forEach(([px, py]) => points.push(rot(el.x + px, el.y + py)));
+    if (["line", "arrow"].includes(el.type)) {
+      // For lines: snap to vertices AND midpoints of segments
+      const worldPoints = el.points.map(([px, py]) => rotatePoint(el.x + px, el.y + py));
+
+      worldPoints.forEach((p, i) => {
+        points.push(p); // Vertex
+        if (i < worldPoints.length - 1) { // Midpoint of segment
+          const next = worldPoints[i + 1];
+          points.push({ x: (p.x + next.x) / 2, y: (p.y + next.y) / 2 });
+        }
+      });
     } else {
-      const corners = [{x:el.x,y:el.y},{x:el.x+el.width,y:el.y},{x:el.x,y:el.y+el.height},{x:el.x+el.width,y:el.y+el.height},{x:cx,y:cy}];
-      points.push(...corners.map(p => rot(p.x, p.y)));
+      // For shapes: snap to corners, edge midpoints, AND the center
+      const corners = [
+        {x: el.x, y: el.y},                                  // Top-Left
+        {x: el.x + el.width, y: el.y},                       // Top-Right
+        {x: el.x, y: el.y + el.height},                      // Bottom-Left
+        {x: el.x + el.width, y: el.y + el.height},           // Bottom-Right
+        {x: cx, y: cy},                                      // Center
+        {x: cx, y: el.y},                                    // Top-Middle
+        {x: cx, y: el.y + el.height},                        // Bottom-Middle
+        {x: el.x, y: cy},                                    // Left-Middle
+        {x: el.x + el.width, y: cy}                          // Right-Middle
+      ];
+      points.push(...corners.map(p => rotatePoint(p.x, p.y)));
     }
+
     for (const p of points) {
       const d = Math.hypot(pointer.x - p.x, pointer.y - p.y);
       if (d < minD) { minD = d; best = p; }
     }
   }
-  if (best) return { x: best.x, y: best.y, vpX: (best.x + appState.scrollX) * zoom, vpY: (best.y + appState.scrollY) * zoom };
+
+  if (best) return {
+    x: best.x,
+    y: best.y,
+    vpX: (best.x + appState.scrollX) * zoom,
+    vpY: (best.y + appState.scrollY) * zoom
+  };
   return null;
 };
 
@@ -247,7 +302,6 @@ ${buildRow("X1 m", "ox1_m", "Y1 m", "oy1_m", "m")}
   <button id="btn-del" style="flex:1; height:24px;">Delete</button>
 </div>
 <div style="display:flex; gap:5px; margin-top:4px; width:100%;">
-  <button id="btn-front" style="flex:1; height:24px;">To front</button>
   <select id="origin-select" style="flex:1; height:24px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px; font-size:13px;"></select>
 </div>
 `;
@@ -262,32 +316,7 @@ updateVisibility();
 
 // --- Logic ---
 const updateOriginVisuals = async (o) => {
-  const sceneEls = view.excalidrawAPI.getSceneElements();
-  const toDelete = sceneEls.filter(el => (o.visualIds || []).includes(el.id));
-  if (toDelete.length > 0) await ea.deleteViewElements(toDelete);
-
-  ea.clear();
-  ea.style.strokeColor = "#e03131"; ea.style.strokeWidth = 1; ea.style.roughness = 0; ea.style.fontSize = 16; ea.style.fontFamily = 3;
-  const p0 = { x: o.x, y: o.y };
-  const cos = Math.cos(o.angle), sin = Math.sin(o.angle);
-  const pX = { x: p0.x + o.length * cos, y: p0.y + o.length * sin };
-  const pY = { x: p0.x - o.length * sin, y: p0.y + o.length * cos };
-
-  const vIds = [
-    ea.addArrow([[p0.x, p0.y], [pX.x, pX.y]], { endArrowHead: "triangle" }),
-    ea.addArrow([[p0.x, p0.y], [pY.x, pY.y]], { endArrowHead: "triangle" }),
-    ea.addText(pX.x + 5, pX.y + 5, `X (${o.id.toUpperCase()})`),
-    ea.addText(pY.x + 5, pY.y + 5, `Y`)
-  ];
-  ea.addToGroup(vIds);
-  await ea.addElementsToView(false, false, true);
-
-  const newEls = view.excalidrawAPI.getSceneElements().filter(el => vIds.includes(el.id));
-  ea.clear();
-  ea.copyViewElementsToEAforEditing(newEls);
-  ea.getElements().forEach(el => el.locked = true);
-  await ea.addElementsToView(false, false, true);
-  o.visualIds = vIds;
+  drawOverlay(state.snapPoint, state.tempStart, null);
 };
 
 const getLineData = (el) => {
@@ -567,7 +596,7 @@ panel.addEventListener("change", (e) => {
   if (e.target.id === "chk-mm") config.showMm = e.target.checked;
   if (e.target.id === "chk-m") config.showM = e.target.checked;
   if (e.target.id === "origin-select") config.activeOriginId = e.target.value;
-  saveSettings(config); updateVisibility(); updateUI(true);
+  saveSettings(config); updateVisibility(); updateUI(true); drawOverlay(null, null, null);
 });
 panel.addEventListener("focusin", (e) => {
   if (e.target.classList.contains("geo-input")) {
@@ -587,21 +616,60 @@ panel.addEventListener("keydown", async (e) => {
   }
 });
 panel.addEventListener("click", async (e) => {
-  if (e.target.id === "btn-close") { clearInterval(state.timer); panel.remove(); document.querySelector("#geo-snap-overlay")?.remove(); /*api.onChange(null); window.excalidrawCanvasChangeActive = false; window.lastX = null;*/ }
-  if (e.target.id === "btn-add") startOriginCreation();
-  if (e.target.id === "btn-front") {
-    const allOriginIds = config.origins.flatMap(o => o.visualIds);
-    const sceneEls = view.excalidrawAPI.getSceneElements();
-    const toFront = sceneEls.filter(el => allOriginIds.includes(el.id));
-    if (toFront.length > 0) { ea.clear(); await ea.copyViewElementsToEAforEditing(toFront); await ea.deleteViewElements(toFront); await ea.addElementsToView(false, false, true); }
+  if (e.target.id === "btn-close") {
+    if (window.geoProListener) {
+      window.geoProListener(); // Unsubscribes from Excalidraw
+      window.geoProListener = null;
+    }
+    panel.remove();
+    document.querySelector("#geo-snap-overlay")?.remove();
   }
+  if (e.target.id === "btn-add") startOriginCreation();
   if (e.target.id === "btn-del") {
     const active = getOrigin(); if (active.persistent) return;
-    const sceneEls = view.excalidrawAPI.getSceneElements();
-    const toDelete = sceneEls.filter(el => active.visualIds.includes(el.id));
-    await ea.deleteViewElements(toDelete);
     config.origins = config.origins.filter(o => o.id !== active.id); config.activeOriginId = "00";
-    saveSettings(config); refreshDropdown(); updateUI(true);
+    saveSettings(config); refreshDropdown(); updateUI(true); drawOverlay(null, null, null);
+  }
+});
+
+if (window.geoProListener) window.geoProListener(); // Cleanup old one
+
+// --- Throttled Listener ---
+let lastZoom = 0;
+let lastScrollX = 0;
+let lastScrollY = 0;
+let lastSelection = "";
+window.geoProListener = view.excalidrawAPI.onChange((elements, appState) => {
+  if (updateRequested) return;
+
+  // Check if anything "spatial" actually changed
+  const selectionIds = appState.selectedElementIds ? Object.keys(appState.selectedElementIds).join(",") : "";
+  const hasMoved = appState.scrollX !== lastScrollX || appState.scrollY !== lastScrollY || appState.zoom.value !== lastZoom;
+  const selectionChanged = selectionIds !== lastSelection;
+
+  if (hasMoved || selectionChanged || state.mode !== "idle") {
+    updateRequested = true;
+    requestAnimationFrame(() => {
+      drawOverlay(state.snapPoint, state.tempStart, null);
+      updateUI(); // Updates the input fields
+
+      // Store current state to compare next time
+      lastScrollX = appState.scrollX;
+      lastScrollY = appState.scrollY;
+      lastZoom = appState.zoom.value;
+      lastSelection = selectionIds;
+
+      updateRequested = false;
+    });
+  }
+});
+
+// Clean up the listener when the panel is closed
+const originalClose = panel.querySelector("#btn-close").onclick;
+panel.querySelector("#btn-close").addEventListener("click", () => {
+  if (window.geoProListener) {
+    window.geoProListener(); // Unsubscribe
+    window.geoProListener = null;
   }
 });
 
@@ -660,7 +728,7 @@ const initDraggable = (p) => {
   });
 };
 
-initDraggable(panel);
-
 refreshDropdown();
-state.timer = setInterval(updateUI, 200);
+updateVisibility();
+updateUI(true);
+drawOverlay(null, null, null);
