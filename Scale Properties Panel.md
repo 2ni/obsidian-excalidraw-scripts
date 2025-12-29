@@ -1,6 +1,30 @@
 /*
- * Excalidraw Geometry Pro (v35 - Full Transformation Matrix)
+ * Excalidraw Geometry Pro
+ * TODO use excalidrawCanvasChangeActive to handle which snapping points to use. When canvas is moved or zoomed -> calculate new points
+ * TODO use onblur to update values, so values can be set on ipad
  */
+/*
+const api = ea.getExcalidrawAPI();
+window.lastX = window.lastX ?? -999999;
+window.lastY = window.lastY ?? -999999;
+window.lastZ = window.lastZ ?? -1;
+
+if (!window.excalidrawCanvasChangeActive) {
+  api.onChange((elements, appState) => {
+    const { scrollX, scrollY, zoom } = appState;
+
+    if (window.lastX !== scrollX || window.lastY !== scrollY || window.lastZ !== zoom.value) {
+      console.log("canvas changed");
+      window.lastX = scrollX;
+      window.lastY = scrollY;
+      window.lastZ = zoom.value;
+    }
+  });
+  window.excalidrawCanvasChangeActive = true;
+  console.log("Canvas change listener subscribed.");
+}
+*/
+
 
 const panelId = "geometry-pro-panel";
 const view = app.workspace.getActiveViewOfType(customElements.get("excalidraw-view")?.constructor || Object);
@@ -9,10 +33,20 @@ if (!view || !view.excalidrawAPI) { new Notice("Open an Excalidraw drawing first
 const existingPanel = view.contentEl.querySelector(`#${panelId}`);
 if (existingPanel) existingPanel.remove();
 
-const getSettings = () => ea.getScriptSettings() ?? {};
-const saveSettings = (s) => ea.setScriptSettings({ ...getSettings(), [view.file.path]: s });
+const getSettings = () => {
+    const file = view.file;
+    const cache = app.metadataCache.getFileCache(file);
+    return cache?.frontmatter?.["excalidraw-coords"] ?? {};
+};
 
-let saved = getSettings()[view.file.path] || {};
+const saveSettings = async (s) => {
+    const file = view.file;
+    await app.fileManager.processFrontMatter(file, (frontmatter) => {
+        frontmatter["excalidraw-coords"] = s;
+    });
+};
+
+let saved = getSettings();
 let config = {
   scale: saved.scale ?? 100,
   useCenter: saved.useCenter ?? false,
@@ -158,11 +192,11 @@ const buildRow = (label1, id1, label2, id2, unitClass) => `
 <div class="row-${unitClass}" style="display:flex; justify-content:space-between; gap:6px; align-items:center;">
   <div style="display:flex; justify-content:space-between; align-items:center; flex:1;">
     <span style="opacity:0.8">${label1}</span>
-    <input type="number" step="any" data-id="${id1}" class="geo-input" style="width:75px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;">
+    <input type="number" inputmode="decimal" step="any" data-id="${id1}" class="geo-input" style="width:75px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;">
   </div>
   <div style="display:flex; justify-content:space-between; align-items:center; flex:1;">
     <span style="opacity:0.8">${label2}</span>
-    <input type="number" step="any" data-id="${id2}" class="geo-input" style="width:75px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;">
+    <input type="number" inputmode="decimal" step="any" data-id="${id2}" class="geo-input" style="width:75px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;">
   </div>
 </div>`;
 
@@ -185,7 +219,7 @@ panel.innerHTML = `
   <label style="display:flex; align-items:center; gap:2px;"><input type="checkbox" id="chk-m" ${config.showM ? "checked" : ""}> m</label>
 </div>
 ${buildSection("Element")}
-<div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Local Rotation °</span><input type="number" step="any" data-id="el_angle" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
+<div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Local Rotation °</span><input type="number" inputmode="decimal" step="any" data-id="el_angle" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
 ${buildRow("X px", "x_px", "Y px", "y_px", "px")}
 ${buildRow("W px", "w_px", "H px", "h_px", "px")}
 ${buildRow("X mm", "x_mm", "Y mm", "y_mm", "mm")}
@@ -194,14 +228,14 @@ ${buildRow("X m", "x_m", "Y m", "y_m", "m")}
 ${buildRow("W m", "w_m", "H m", "h_m", "m")}
 <div id="section-line" style="display:none;">
   ${buildSection("Line / Arrow")}
-  <div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Vector Rot °</span><input type="number" step="any" data-id="line_angle" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
-  <div class="row-px" style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Length px</span><input type="number" step="any" data-id="line_len_px" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
-  <div class="row-mm" style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Length mm</span><input type="number" step="any" data-id="line_len_mm" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
-  <div class="row-m" style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Length m</span><input type="number" step="any" data-id="line_len_m" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
+  <div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Vector Rot °</span><input type="number" inputmode="decimal" step="any" data-id="line_angle" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
+  <div class="row-px" style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Length px</span><input type="number" inputmode="decimal" step="any" data-id="line_len_px" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
+  <div class="row-mm" style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Length mm</span><input type="number" inputmode="decimal" step="any" data-id="line_len_mm" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
+  <div class="row-m" style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Length m</span><input type="number" inputmode="decimal" step="any" data-id="line_len_m" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
 </div>
 ${buildSection("Coordinate System")}
-<div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Scale 1:</span><input type="number" step="any" data-id="scale" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
-<div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Rotation °</span><input type="number" step="any" data-id="o_angle" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
+<div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Scale 1:</span><input type="number" inputmode="decimal" step="any" data-id="scale" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
+<div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Rotation °</span><input type="number" inputmode="decimal" step="any" data-id="o_angle" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
 ${buildRow("X0 px", "ox0_px", "Y0 px", "oy0_px", "px")}
 ${buildRow("X1 px", "ox1_px", "Y1 px", "oy1_px", "px")}
 ${buildRow("X0 mm", "ox0_mm", "Y0 mm", "oy0_mm", "mm")}
@@ -535,7 +569,13 @@ panel.addEventListener("change", (e) => {
   if (e.target.id === "origin-select") config.activeOriginId = e.target.value;
   saveSettings(config); updateVisibility(); updateUI(true);
 });
-panel.addEventListener("focusin", (e) => { if (e.target.classList.contains("geo-input")) { state.editingField = e.target.dataset.id; state.originalValue = e.target.value; } });
+panel.addEventListener("focusin", (e) => {
+  if (e.target.classList.contains("geo-input")) {
+    e.target.select();
+    state.editingField = e.target.dataset.id;
+    state.originalValue = e.target.value;
+  }
+});
 panel.addEventListener("focusout", () => { state.editingField = null; });
 panel.addEventListener("keydown", async (e) => {
   if (!e.target.classList.contains("geo-input")) return;
@@ -547,7 +587,7 @@ panel.addEventListener("keydown", async (e) => {
   }
 });
 panel.addEventListener("click", async (e) => {
-  if (e.target.id === "btn-close") { clearInterval(state.timer); panel.remove(); document.querySelector("#geo-snap-overlay")?.remove(); }
+  if (e.target.id === "btn-close") { clearInterval(state.timer); panel.remove(); document.querySelector("#geo-snap-overlay")?.remove(); /*api.onChange(null); window.excalidrawCanvasChangeActive = false; window.lastX = null;*/ }
   if (e.target.id === "btn-add") startOriginCreation();
   if (e.target.id === "btn-front") {
     const allOriginIds = config.origins.flatMap(o => o.visualIds);
@@ -569,9 +609,9 @@ const initDraggable = (p) => {
   let isDragging = false;
   let offset = { x: 0, y: 0 };
 
+  // --- MOUSE EVENTS (macOS/Desktop) ---
   p.addEventListener("mousedown", (e) => {
-    // Only drag if clicking the panel background or header, not inputs
-    if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
+    if (["INPUT", "BUTTON", "SELECT"].includes(e.target.tagName)) return;
     isDragging = true;
     offset = { x: e.clientX - p.offsetLeft, y: e.clientY - p.offsetTop };
     p.style.cursor = "grabbing";
@@ -579,18 +619,47 @@ const initDraggable = (p) => {
 
   window.addEventListener("mousemove", (e) => {
     if (!isDragging) return;
+    e.stopPropagation();
     p.style.left = `${e.clientX - offset.x}px`;
     p.style.top = `${e.clientY - offset.y}px`;
-    p.style.right = "auto"; // Prevent conflict with right-docking
+    p.style.right = "auto";
   });
 
   window.addEventListener("mouseup", () => {
     isDragging = false;
     p.style.cursor = "default";
   });
+
+  // --- TOUCH EVENTS (iPad/Mobile) ---
+  p.addEventListener("touchstart", (e) => {
+    if (["INPUT", "BUTTON", "SELECT"].includes(e.target.tagName) || e.target.id === "btn-close") return;
+    e.stopPropagation();
+
+    // We use e.touches[0] to get the first finger
+    const touch = e.touches[0];
+    isDragging = true;
+    offset = { x: touch.clientX - p.offsetLeft, y: touch.clientY - p.offsetTop };
+
+    // Prevents iPad from scrolling the page while dragging the panel
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+
+  window.addEventListener("touchmove", (e) => {
+    if (!isDragging) return;
+    const touch = e.touches[0];
+
+    p.style.left = `${touch.clientX - offset.x}px`;
+    p.style.top = `${touch.clientY - offset.y}px`;
+    p.style.right = "auto";
+
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+
+  window.addEventListener("touchend", () => {
+    isDragging = false;
+  });
 };
 
-// Call this once after panel creation
 initDraggable(panel);
 
 refreshDropdown();
