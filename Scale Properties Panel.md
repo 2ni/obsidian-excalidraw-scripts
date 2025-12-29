@@ -598,6 +598,20 @@ panel.addEventListener("change", (e) => {
   if (e.target.id === "origin-select") config.activeOriginId = e.target.value;
   saveSettings(config); updateVisibility(); updateUI(true); drawOverlay(null, null, null);
 });
+
+// Helper to apply and refresh
+const handleInputCommit = async (inputEl) => {
+  const val = parseFloat(inputEl.value);
+  const id = inputEl.dataset.id;
+
+  // Only apply if the value actually changed to avoid redundant file writes
+  if (inputEl.value !== state.originalValue) {
+    await applyInputToScene(id, val);
+    updateUI(true);
+  }
+  state.editingField = null;
+};
+
 panel.addEventListener("focusin", (e) => {
   if (e.target.classList.contains("geo-input")) {
     e.target.select();
@@ -605,16 +619,33 @@ panel.addEventListener("focusin", (e) => {
     state.originalValue = e.target.value;
   }
 });
-panel.addEventListener("focusout", () => { state.editingField = null; });
-panel.addEventListener("keydown", async (e) => {
-  if (!e.target.classList.contains("geo-input")) return;
-  if (e.key === "Escape") { e.target.value = state.originalValue; e.target.blur(); return; }
-  if (e.key === "Enter" || e.key === "Tab") {
-    await applyInputToScene(e.target.dataset.id, parseFloat(e.target.value));
-    updateUI(true);
-    if (e.key === "Enter") { e.preventDefault(); e.target.select(); }
+
+panel.addEventListener("focusout", async (e) => {
+  if (e.target.classList.contains("geo-input")) {
+    await handleInputCommit(e.target);
   }
 });
+
+panel.addEventListener("keydown", async (e) => {
+  if (!e.target.classList.contains("geo-input")) return;
+
+  if (e.key === "Escape") {
+    e.target.value = state.originalValue;
+    state.editingField = null; // Prevent focusout from saving the reverted value
+    e.target.select();
+    return;
+  }
+
+  if (e.key === "Enter" || e.key === "Tab") {
+    // On Enter, we apply but keep focus so user can see the change
+    await handleInputCommit(e.target);
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.target.select();
+    }
+  }
+});
+
 panel.addEventListener("click", async (e) => {
   if (e.target.id === "btn-close") {
     if (window.geoProListener) {
