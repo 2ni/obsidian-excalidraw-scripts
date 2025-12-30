@@ -173,7 +173,6 @@ const drawOverlay = (snapP, startP, currP) => {
 };
 
 const getSnapPoint = (pointer) => {
-  console.log("getSnapPoint");
   const api = view.excalidrawAPI;
   const appState = api.getAppState();
   const zoom = appState.zoom.value;

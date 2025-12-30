@@ -14,7 +14,7 @@ for (const el of selectedElements) {
 }
 
 if (!line) {
-  return console.error("You must select at leeast one circle and one straight line");
+  new Notice("You must select at leeast one ellipse, diamong, rectangle and one straight line");
 }
 
 // --- GET LINE POINTS IN ABSOLUTE COORDINATES ---
@@ -28,14 +28,14 @@ const y2 = line.y + p1[1];
 const vx = x2 - x1;
 const vy = y2 - y1;
 
-for (const circle of selectedElements) {
-  if (circle.type !== "ellipse") continue;
+for (const elm of selectedElements) {
+  if (!["ellipse", "diamond", "rectangle"].includes(elm.type)) continue;
 
-  // --- GET CIRCLE CENTER ---
-  const cx = circle.x + circle.width / 2;
-  const cy = circle.y + circle.height / 2;
+  // --- GET ELEMENT CENTER ---
+  const cx = elm.x + elm.width / 2;
+  const cy = elm.y + elm.height / 2;
 
-  // --- PROJECT CIRCLE CENTER ON LINE ---
+  // --- PROJECT ELEMENT CENTER ON LINE ---
   const t = ((cx - x1) * vx + (cy - y1) * vy) / (vx * vx + vy * vy);
   const ix = x1 + t * vx;
   const iy = y1 + t * vy;
