@@ -55,9 +55,38 @@ const formatAngle = (rad) => {
 const getOrigin = () => config.origins.find(o => o.id === config.activeOriginId) || config.origins[0];
 
 const getCurrentAnchor = (element) => {
+  const isLine = ["line", "arrow"].includes(element.type) && element.points.length === 2;
+
+  if (config.useCenter) {
+    if (isLine) {
+      // 1. Start point (P1) is element.x, element.y
+      const p1 = { x: element.x, y: element.y };
+
+      // 2. End point (P2) is the relative point [1] rotated by element.angle
+      const p2rel = element.points[1];
+      const cos = Math.cos(element.angle), sin = Math.sin(element.angle);
+      const p2 = {
+        x: p1.x + (p2rel[0] * cos - p2rel[1] * sin),
+        y: p1.y + (p2rel[0] * sin + p2rel[1] * cos)
+      };
+
+      // 3. Midpoint of the actual vector
+      return {
+        x: (p1.x + p2.x) / 2,
+        y: (p1.y + p2.y) / 2
+      };
+    }
+
+    // Default center for other shapes (Rect, Circle, etc.)
+    return {
+      x: element.x + element.width / 2,
+      y: element.y + element.height / 2
+    };
+  }
+
+  // Reference Point (Top-Left) logic
   const cx = element.x + element.width / 2;
   const cy = element.y + element.height / 2;
-  if (config.useCenter) return { x: cx, y: cy };
   const cos = Math.cos(element.angle), sin = Math.sin(element.angle);
   const dx = -element.width / 2, dy = -element.height / 2;
   return { x: cx + (dx * cos - dy * sin), y: cy + (dx * sin + dy * cos) };
@@ -676,21 +705,34 @@ panel.addEventListener("click", async (e) => {
 });
 
 if (window.geoProListener) window.geoProListener(); // Cleanup old one
+let lastVersionNonce = 0;
 
 // --- Throttled Listener ---
 let lastZoom = 0;
 let lastScrollX = 0;
 let lastScrollY = 0;
-let lastSelection = "";
+let lastSelectionString = "";
 window.geoProListener = view.excalidrawAPI.onChange((elements, appState) => {
   if (updateRequested) return;
 
   // Check if anything "spatial" actually changed
-  const selectionIds = appState.selectedElementIds ? Object.keys(appState.selectedElementIds).join(",") : "";
+  const selectionIds = appState.selectedElementIds ? Object.keys(appState.selectedElementIds) : [];
+  const selectionIdsString = selectionIds.join(",");
   const hasMoved = appState.scrollX !== lastScrollX || appState.scrollY !== lastScrollY || appState.zoom.value !== lastZoom;
-  const selectionChanged = selectionIds !== lastSelection;
+  const selectionChanged = selectionIdsString !== lastSelectionString;
 
-  if (hasMoved || selectionChanged || state.mode !== "idle") {
+  // Check if the selected element has changed (only check the 1st element)
+  let elementChanged = false;
+  if (selectionIds.length > 0) {
+    const activeEl = elements.find(el => el.id === selectionIds[0]);
+    if (activeEl && activeEl.versionNonce !== lastVersionNonce) {
+      elementChanged = true;
+      lastVersionNonce = activeEl.versionNonce;
+    }
+  }
+
+
+  if (hasMoved || selectionChanged || elementChanged || state.mode !== "idle") {
     updateRequested = true;
     requestAnimationFrame(() => {
       drawOverlay(state.snapPoint, state.tempStart, null);
@@ -700,7 +742,7 @@ window.geoProListener = view.excalidrawAPI.onChange((elements, appState) => {
       lastScrollX = appState.scrollX;
       lastScrollY = appState.scrollY;
       lastZoom = appState.zoom.value;
-      lastSelection = selectionIds;
+      lastSelectionString = selectionIdsString;
 
       updateRequested = false;
     });
