@@ -7,12 +7,12 @@ The panel assumes we work with 96px/mm (which seems to be the case in Ecalidraw)
 
 1. open the scale properties panel via the command palette
 2. create new coordinate systems by clicking on "New"
-2.1 the system is defined by a line by setting 2 points
-2.2 use command to snap the 1st point on highlighted points (eg center of circle)
-2.3 to set the 2nd point similar to the first. You can use shift to snap at angles of 15°
-2.4 when the 2nd point is set, the coordinate system will be visible
-2.5 use the dropdown to switch between coordinate systems. The one in use will be highlighted
-1. for better use, define a printable area first with the "Printable Layout Wizard"
+  * the system is defined by a line by setting 2 points
+  * use command to snap the 1st point on highlighted points (eg center of circle)
+  * to set the 2nd point similar to the first. You can use shift to snap at angles of 15°
+  * when the 2nd point is set, the coordinate system will be visible
+  * use the dropdown to switch between coordinate systems. The one in use will be highlighted
+3. for better use, define a printable area first with the "Printable Layout Wizard"
 
 For now only single elements are supported (no groups).
 
