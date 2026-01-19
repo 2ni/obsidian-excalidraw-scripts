@@ -16,11 +16,11 @@ The panel assumes we work with 96px/mm (which seems to be the case in Ecalidraw)
 
 For now only single elements are supported (no groups).
 
-![Scale Properties Panel](Scale Properties Panel.png)
+![Scale Properties Panel](Scale%20Properties%20Panel.png)
 
 #### Perpendicular Line
 This scripts adds perpendicular lines between the center of objects (circle, rectangle, diamond) and a given line. The color and width will be the same as the line.
-![Perpendicular Line](./Perpendicular\ Line.png)
+![Perpendicular Line](Perpendicular%20Line.png)
 
 #### Metakeys
 WORK IN PROGRESS
