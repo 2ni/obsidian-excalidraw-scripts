@@ -310,6 +310,9 @@ ${buildRow("X m", "x_m", "Y m", "y_m", "m")}
 ${buildRow("W m", "w_m", "H m", "h_m", "m")}
 <div id="section-line" style="display:none;">
   ${buildSection("Line / Arrow")}
+  ${buildRow("XE px", "xe_px", "YE px", "ye_px", "px")}
+  ${buildRow("XE mm", "xe_mm", "YE mm", "ye_mm", "mm")}
+  ${buildRow("XE m", "xe_m", "YE m", "ye_m", "m")}
   <div style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Vector Rot °</span><input type="number" inputmode="decimal" enterkeyhint="done" step="any" data-id="line_angle" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
   <div class="row-px" style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Length px</span><input type="number" inputmode="decimal" enterkeyhint="done" step="any" data-id="line_len_px" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
   <div class="row-mm" style="display:flex; justify-content:space-between; align-items:center;"><span style="opacity:0.8">Length mm</span><input type="number" inputmode="decimal" enterkeyhint="done" step="any" data-id="line_len_mm" class="geo-input" style="width:90px; text-align:right; padding:2px 4px; background:var(--background-primary); border:1px solid var(--divider-color); color:var(--text-normal); border-radius:4px;"></div>
@@ -374,7 +377,9 @@ const getLineData = (el) => {
     localW: Math.abs(localW),
     localH: Math.abs(localH),
     rawLocalW: localW, // Keep sign for resizing logic
-    rawLocalH: localH
+    rawLocalH: localH,
+    xe: l2.x,
+    ye: l2.y
   };
 };
 
@@ -459,6 +464,30 @@ const applyInputToScene = async (id, val) => {
     activeEl.height = Math.max(0.01, Math.abs(ny2));
   }
 
+  if (id.startsWith("xe_") || id.startsWith("ye_")) {
+    if (isLine) {
+      const currentP1Local = toLocal({x: activeEl.x, y: activeEl.y});
+      let targetXE = lData.xe;
+      let targetYE = lData.ye;
+
+      const valPx = (id.includes("_px") ? val : id.includes("_mm") ? toPx(val) : fromMetersToPx(val));
+      if (id.startsWith("xe_")) targetXE = valPx;
+      else targetYE = valPx;
+
+      // Calculate new vector relative to P1
+      const dx = targetXE - currentP1Local.x;
+      const dy = targetYE - currentP1Local.y;
+
+      const newLen = Math.hypot(dx, dy);
+      const newGlobalAngle = Math.atan2(dy, dx) + o.angle;
+      const internalAngle = newGlobalAngle - activeEl.angle;
+
+      activeEl.points = [[0, 0], [newLen * Math.cos(internalAngle), newLen * Math.sin(internalAngle)]];
+      activeEl.width = Math.max(0.01, Math.abs(activeEl.points[1][0]));
+      activeEl.height = Math.max(0.01, Math.abs(activeEl.points[1][1]));
+    }
+  }
+
   // 5. FINAL SYNC
   activeEl.angle = targetLocal.angle + o.angle;
   const finalGlobalTarget = toGlobal(targetLocal, targetLocal.angle);
@@ -512,6 +541,13 @@ const updateUI = (force = false) => {
     setV("line_len_px", lData.length);
     setV("line_len_mm", toMm(lData.length));
     setV("line_len_m", toMeters(lData.length), 3);
+
+    setV("xe_px", lData.xe);
+    setV("ye_px", lData.ye);
+    setV("xe_mm", toMm(lData.xe));
+    setV("ye_mm", toMm(lData.ye));
+    setV("xe_m", toMeters(lData.xe), 3);
+    setV("ye_m", toMeters(lData.ye), 3);
   } else {
     lineSection.style.display = "none";
   }
