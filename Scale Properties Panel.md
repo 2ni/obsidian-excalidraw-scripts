@@ -7,20 +7,42 @@ const panelId = "geometry-pro-panel";
 const view = app.workspace.getActiveViewOfType(customElements.get("excalidraw-view")?.constructor || Object);
 if (!view || !view.excalidrawAPI) { new Notice("Open an Excalidraw drawing first"); return; }
 
+// Ensure the global ea is synchronized with the current view
+if (typeof ea !== "undefined") ea.setView(view);
+
 const existingPanel = view.contentEl.querySelector(`#${panelId}`);
 if (existingPanel) existingPanel.remove();
 
+// Memory cache to bridge the gap between file save and metadataCache update
+const STORAGE_KEY = "excalidraw-geometry-pro-cache";
+if (!window[STORAGE_KEY]) window[STORAGE_KEY] = {};
+
 const getSettings = () => {
     const file = view.file;
+    if (!file) return {};
+    const memory = window[STORAGE_KEY][file.path];
+    if (memory) return memory;
+    
     const cache = app.metadataCache.getFileCache(file);
     return cache?.frontmatter?.["excalidraw-coords"] ?? {};
 };
 
 const saveSettings = async (s) => {
     const file = view.file;
-    await app.fileManager.processFrontMatter(file, (frontmatter) => {
-        frontmatter["excalidraw-coords"] = s;
-    });
+    if (!file) return;
+    
+    // Update memory cache immediately
+    window[STORAGE_KEY][file.path] = s;
+    
+    // Clone data for clean YAML serialization
+    const dataToSave = JSON.parse(JSON.stringify(s));
+    try {
+        await app.fileManager.processFrontMatter(file, (frontmatter) => {
+            frontmatter["excalidraw-coords"] = dataToSave;
+        });
+    } catch (e) {
+        console.error("Geometry Pro: Save failed", e);
+    }
 };
 
 let saved = getSettings();
@@ -284,7 +306,8 @@ const buildRow = (label1, id1, label2, id2, unitClass) => `
 
 const panel = document.createElement("div");
 panel.id = panelId;
-panel.style.cssText = `position:absolute; top:${config.panelPos.top}; right:${config.panelPos.right}; width:260px; background:var(--background-secondary); border:1px solid var(--divider-color); box-shadow:0 4px 12px rgba(0,0,0,0.15); border-radius:8px; padding:10px; z-index:100; font-size:11px; display:flex; flex-direction:column; gap:6px; max-height: 85vh; overflow-y:auto; font-family: var(--font-ui); color: var(--text-normal);`;
+const pos = config.panelPos;
+panel.style.cssText = `position:absolute; top:${pos.top}; right:${pos.right || "auto"}; left:${pos.left || "auto"}; width:260px; background:var(--background-secondary); border:1px solid var(--divider-color); box-shadow:0 4px 12px rgba(0,0,0,0.15); border-radius:8px; padding:10px; z-index:100; font-size:11px; display:flex; flex-direction:column; gap:6px; max-height: 85vh; overflow-y:auto; font-family: var(--font-ui); color: var(--text-normal);`;
 
 panel.innerHTML = `
 <div style="display:flex; justify-content:space-between; align-items:center; font-weight:bold; margin-bottom:4px;">
@@ -388,7 +411,7 @@ const applyInputToScene = async (id, val) => {
   const o = getOrigin();
 
   // 1. Origin/Scale handling (Stays same)
-  if (id === "scale") { config.scale = val; saveSettings(config); return; }
+  if (id === "scale") { config.scale = val; await saveSettings(config); return; }
   if (id.startsWith("o")) {
     let p1 = { x: o.x + o.length * Math.cos(o.angle), y: o.y + o.length * Math.sin(o.angle) };
     if (id === "ox0_px") o.x = val; if (id === "oy0_px") o.y = val;
@@ -399,7 +422,7 @@ const applyInputToScene = async (id, val) => {
     if (id === "ox1_m") p1.x = fromMetersToPx(val); if (id === "oy1_m") p1.y = fromMetersToPx(val);
     o.angle = (id === "o_angle") ? toRad(val) : Math.atan2(p1.y - o.y, p1.x - o.x);
     o.length = Math.hypot(p1.x - o.x, p1.y - o.y) || 100;
-    saveSettings(config); await updateOriginVisuals(o); return;
+    await saveSettings(config); await updateOriginVisuals(o); return;
   }
 
   const el = ea.getViewSelectedElement();
@@ -636,9 +659,9 @@ const startOriginCreation = () => {
         }
         const dx = target.x - state.tempStart.x, dy = target.y - state.tempStart.y;
         const id = Math.random().toString(36).substring(2, 4);
-        const newOrigin = { id, x: state.tempStart.x, y: state.tempStart.y, angle: Math.atan2(dy, dx), length: Math.hypot(dx, dy) || 100, visualIds: [] };
+        const newOrigin = { id, x: state.tempStart.x, y: state.tempStart.y, angle: Math.atan2(dy, dx), length: Math.hypot(dx, dy) || 100, visualIds: [], persistent: false };
         config.origins.push(newOrigin); config.activeOriginId = id;
-        await updateOriginVisuals(newOrigin); saveSettings(config); refreshDropdown(); updateUI(true);
+        await updateOriginVisuals(newOrigin); await saveSettings(config); refreshDropdown(); updateUI(true);
         if (state.capturedSelection?.length > 0) ea.selectElementsInView(state.capturedSelection);
         stop();
     }
@@ -660,7 +683,7 @@ panel.addEventListener("change", async (e) => {
   if (e.target.id === "chk-m") config.showM = e.target.checked;
   if (e.target.id === "origin-select") config.activeOriginId = e.target.value;
   if (e.target.id.startsWith("chk") || e.target.id === "origin-select") {
-    saveSettings(config);
+    await saveSettings(config);
     updateVisibility();
     updateUI(true);
     drawOverlay(null, null, null);
@@ -736,7 +759,7 @@ panel.addEventListener("click", async (e) => {
   if (e.target.id === "btn-del") {
     const active = getOrigin(); if (active.persistent) return;
     config.origins = config.origins.filter(o => o.id !== active.id); config.activeOriginId = "00";
-    saveSettings(config); refreshDropdown(); updateUI(true); drawOverlay(null, null, null);
+    await saveSettings(config); refreshDropdown(); updateUI(true); drawOverlay(null, null, null);
   }
 });
 
@@ -785,18 +808,16 @@ window.geoProListener = view.excalidrawAPI.onChange((elements, appState) => {
   }
 });
 
-// Clean up the listener when the panel is closed
-const originalClose = panel.querySelector("#btn-close").onclick;
-panel.querySelector("#btn-close").addEventListener("click", () => {
-  if (window.geoProListener) {
-    window.geoProListener(); // Unsubscribe
-    window.geoProListener = null;
-  }
-});
-
 const initDraggable = (p) => {
   let isDragging = false;
   let offset = { x: 0, y: 0 };
+
+  const finalizeDrag = async () => {
+    isDragging = false;
+    p.style.cursor = "default";
+    config.panelPos = { top: p.style.top, right: p.style.right, left: p.style.left };
+    await saveSettings(config);
+  };
 
   // --- MOUSE EVENTS (macOS/Desktop) ---
   p.addEventListener("mousedown", (e) => {
@@ -814,10 +835,7 @@ const initDraggable = (p) => {
     p.style.right = "auto";
   });
 
-  window.addEventListener("mouseup", () => {
-    isDragging = false;
-    p.style.cursor = "default";
-  });
+  window.addEventListener("mouseup", finalizeDrag);
 
   // --- TOUCH EVENTS (iPad/Mobile) ---
   p.addEventListener("touchstart", (e) => {
@@ -844,12 +862,11 @@ const initDraggable = (p) => {
     if (e.cancelable) e.preventDefault();
   }, { passive: false });
 
-  window.addEventListener("touchend", () => {
-    isDragging = false;
-  });
+  window.addEventListener("touchend", finalizeDrag);
 };
 
 refreshDropdown();
 updateVisibility();
 updateUI(true);
 drawOverlay(null, null, null);
+initDraggable(panel);
