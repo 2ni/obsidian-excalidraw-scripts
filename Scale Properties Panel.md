@@ -22,7 +22,7 @@ const getSettings = () => {
     if (!file) return {};
     const memory = window[STORAGE_KEY][file.path];
     if (memory) return memory;
-    
+
     const cache = app.metadataCache.getFileCache(file);
     return cache?.frontmatter?.["excalidraw-coords"] ?? {};
 };
@@ -30,10 +30,10 @@ const getSettings = () => {
 const saveSettings = async (s) => {
     const file = view.file;
     if (!file) return;
-    
+
     // Update memory cache immediately
     window[STORAGE_KEY][file.path] = s;
-    
+
     // Clone data for clean YAML serialization
     const dataToSave = JSON.parse(JSON.stringify(s));
     try {
@@ -715,6 +715,12 @@ panel.addEventListener("focusin", (e) => {
     e.target.select();
     state.editingField = e.target.dataset.id;
     state.originalValue = e.target.value;
+  }
+});
+
+panel.addEventListener("focusout", (e) => {
+  if (e.target.classList.contains("geo-input")) {
+    state.editingField = null; // Always clear, even if value didn't change
   }
 });
 
